@@ -24,5 +24,6 @@ public class RentalLog {
         this.logType = logType;
     }
 
-    public RentalLog() {}
+    public RentalLog() {
+    }
 }

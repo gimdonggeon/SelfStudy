@@ -34,5 +34,6 @@ public class Item {
         this.owner = owner;
     }
 
-    public Item() {}
+    public Item() {
+    }
 }

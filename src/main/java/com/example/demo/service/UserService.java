@@ -30,6 +30,7 @@ public class UserService {
 
     public Authentication loginUser(LoginRequestDto loginRequestDto) {
         User user = userRepository.findByEmail(loginRequestDto.getEmail());
+
         if (user == null || !PasswordEncoder.matches(loginRequestDto.getPassword(), user.getPassword())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "유효하지 않은 사용자 이름 혹은 잘못된 비밀번호");
         }

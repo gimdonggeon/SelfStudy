@@ -1,6 +1,8 @@
 package com.example.demo.service;
 
+import com.example.demo.dto.ReportResponseDto;
 import com.example.demo.entity.User;
+import com.example.demo.exception.ReportUsersException;
 import com.example.demo.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,13 +19,13 @@ public class AdminService {
 
     // TODO: 4. find or save 예제 개선
     @Transactional
-    public void reportUsers(List<Long> userIds) {
-        for (Long userId : userIds) {
-            User user = userRepository.findById(userId).orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 값이 존재하지 않습니다."));
-
-            user.updateStatusToBlocked();
-
-            userRepository.save(user);
+    public ReportResponseDto reportUsers(List<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            throw new IllegalArgumentException("사용자 ID 목록이 비어있습니다.");
         }
+
+        int updatedCount = userRepository.updateStatusToBlockedForUsers(userIds);
+
+        return new ReportResponseDto(updatedCount, userIds);
     }
 }

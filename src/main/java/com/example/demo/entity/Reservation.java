@@ -35,7 +35,8 @@ public class Reservation {
         this.endAt = endAt;
     }
 
-    public Reservation() {}
+    public Reservation() {
+    }
 
     public void updateStatus(String status) {
         this.status = status;

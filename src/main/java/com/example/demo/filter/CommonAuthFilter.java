@@ -13,7 +13,16 @@ public interface CommonAuthFilter extends Filter {
 
     default HttpSession findHttpSession(ServletRequest request) {
         HttpServletRequest httpServletRequest = (HttpServletRequest) request;
-        return Optional.of(httpServletRequest.getSession(false))
-                .orElseThrow(() -> new UnauthorizedException(HttpStatus.UNAUTHORIZED, "로그인 필요"));
+        HttpSession session = httpServletRequest.getSession(false);
+
+        String requestURI = httpServletRequest.getRequestURI();
+        if (requestURI.equals("/users") || requestURI.equals("/users/login")) {
+            return null;
+        }
+
+        if (session == null) {
+            throw new UnauthorizedException(HttpStatus.UNAUTHORIZED, "로그인 필요");
+        }
+        return session;
     }
 }

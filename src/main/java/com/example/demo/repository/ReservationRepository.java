@@ -20,6 +20,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     List<Reservation> findByItemId(Long itemId);
 
     @Query("SELECT r FROM Reservation r " +
+            "JOIN FETCH r.user u " +
+            "JOIN FETCH r.item i " +
             "WHERE r.item.id = :id " +
             "AND NOT (r.endAt <= :startAt OR r.startAt >= :endAt) " +
             "AND r.status = 'APPROVED'")
@@ -28,4 +30,9 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             @Param("startAt") LocalDateTime startAt,
             @Param("endAt") LocalDateTime endAt
     );
+
+    @Query("SELECT r FROM Reservation r " +
+            "JOIN FETCH r.user u " +
+            "JOIN FETCH r.item i")
+    List<Reservation> findAllWithUserAndItem();
 }
