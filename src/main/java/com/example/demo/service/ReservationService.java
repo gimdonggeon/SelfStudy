@@ -1,20 +1,24 @@
 package com.example.demo.service;
 
 import com.example.demo.dto.ReservationResponseDto;
-import com.example.demo.entity.Item;
-import com.example.demo.entity.RentalLog;
-import com.example.demo.entity.Reservation;
-import com.example.demo.entity.User;
+import com.example.demo.entity.*;
 import com.example.demo.exception.ReservationConflictException;
 import com.example.demo.repository.ItemRepository;
 import com.example.demo.repository.ReservationRepository;
 import com.example.demo.repository.UserRepository;
+import com.querydsl.core.BooleanBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+
+import static com.example.demo.entity.QItem.item;
+import static com.example.demo.entity.QReservation.reservation;
+import static com.example.demo.entity.QUser.user;
+import static com.example.demo.entity.ReservationStatus.PENDING;
 
 
 @Service
@@ -23,6 +27,7 @@ public class ReservationService {
     private final ItemRepository itemRepository;
     private final UserRepository userRepository;
     private final RentalLogService rentalLogService;
+    private final QReservation qReservation = QReservation.reservation;
 
     public ReservationService(ReservationRepository reservationRepository,
                               ItemRepository itemRepository,
@@ -43,13 +48,11 @@ public class ReservationService {
             throw new ReservationConflictException("해당 물건은 이미 그 시간에 예약이 있습니다.");
         }
         // Item 및 User 유효성 검사
-        Item item = itemRepository.findById(itemId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 값이 존재하지 않습니다."));
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 값이 존재하지 않습니다."));
+        Item item = findItemById(itemId);
+        User user = findUserById(userId);
 
         //Reservation 생성
-        Reservation reservation = new Reservation(item, user, "PENDING", startAt, endAt);
+        Reservation reservation = new Reservation(item, user, ReservationStatus.PENDING, startAt, endAt);
         Reservation savedReservation = reservationRepository.save(reservation);
 
         // Rantallog 저장 (예외가 발생하면 전체 트랜잭션 롤백)
@@ -68,18 +71,9 @@ public class ReservationService {
         //fetch join을 사용하여, User와 Item을 한 번의 쿼리로 함께 가져오게 함.
         List<Reservation> reservations = reservationRepository.findAllWithUserAndItem();
 
-        return reservations.stream().map(reservation -> {
-            User user = reservation.getUser();
-            Item item = reservation.getItem();
-
-            return new ReservationResponseDto(
-                    reservation.getId(),
-                    user.getNickname(),
-                    item.getName(),
-                    reservation.getStartAt(),
-                    reservation.getEndAt()
-            );
-        }).toList();
+        return reservations.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
     }
 
     // TODO: 5. QueryDSL 검색 개선
@@ -87,56 +81,79 @@ public class ReservationService {
 
         List<Reservation> reservations = searchReservations(userId, itemId);
 
-        return convertToDto(reservations);
+        return reservations.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
     }
 
     public List<Reservation> searchReservations(Long userId, Long itemId) {
+        BooleanBuilder builder = new BooleanBuilder();
 
-        if (userId != null && itemId != null) {
-            return reservationRepository.findByUserIdAndItemId(userId, itemId);
-        } else if (userId != null) {
-            return reservationRepository.findByUserId(userId);
-        } else if (itemId != null) {
-            return reservationRepository.findByItemId(itemId);
-        } else {
-            return reservationRepository.findAll();
+        if (userId != null) {
+           builder.and(qReservation.user.id.eq(userId));
         }
+        if (itemId != null) {
+            builder.and(qReservation.item.id.eq(itemId));
+        }
+        return (List<Reservation>) reservationRepository.findAll(builder);
     }
 
-    private List<ReservationResponseDto> convertToDto(List<Reservation> reservations) {
-        return reservations.stream()
-                .map(reservation -> new ReservationResponseDto(
-                        reservation.getId(),
-                        reservation.getUser().getNickname(),
-                        reservation.getItem().getName(),
-                        reservation.getStartAt(),
-                        reservation.getEndAt()
-                ))
-                .toList();
+    private ReservationResponseDto convertToDto(Reservation reservation) {
+       User user = reservation.getUser();
+       Item item = reservation.getItem();
+
+       return new ReservationResponseDto(
+               reservation.getId(),
+               user.getNickname(),
+               item.getName(),
+               reservation.getStartAt(),
+               reservation.getEndAt()
+       );
     }
 
     // TODO: 7. 리팩토링
     @Transactional
-    public void updateReservationStatus(Long reservationId, String status) {
-        Reservation reservation = reservationRepository.findById(reservationId).orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 데이터가 존재하지 않습니다."));
+    public void updateReservationStatus(Long reservationId, ReservationStatus status) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 데이터가 존재하지 않습니다."));
 
-        if ("APPROVED".equals(status)) {
-            if (!"PENDING".equals(reservation.getStatus())) {
-                throw new IllegalArgumentException("PENDING 상태만 APPROVED로 변경 가능합니다.");
-            }
-            reservation.updateStatus("APPROVED");
-        } else if ("CANCELED".equals(status)) {
-            if ("EXPIRED".equals(reservation.getStatus())) {
-                throw new IllegalArgumentException("EXPIRED 상태인 예약은 취소할 수 없습니다.");
-            }
-            reservation.updateStatus("CANCELED");
-        } else if ("EXPIRED".equals(status)) {
-            if (!"PENDING".equals(reservation.getStatus())) {
-                throw new IllegalArgumentException("PENDING 상태만 EXPIRED로 변경 가능합니다.");
-            }
-            reservation.updateStatus("EXPIRED");
-        } else {
-            throw new IllegalArgumentException("올바르지 않은 상태: " + status);
+        switch (status) {
+            case APPROVED:
+                validatePendingStatus(reservation);
+                reservation.updateStatus(ReservationStatus.APPROVED);
+                break;
+            case CANCELED:
+                validateExpiredStatus(reservation);
+                reservation.updateStatus(ReservationStatus.CANCELED);
+                break;
+            case EXPIRED:
+                validatePendingStatus(reservation);
+                reservation.updateStatus(ReservationStatus.EXPIRED);
+                break;
+            default:
+                throw new IllegalArgumentException("올바르지 않은 상태: " + status);
         }
+    }
+
+    private void validatePendingStatus(Reservation reservation) {
+        if (!reservation.getStatus().equals(ReservationStatus.PENDING)) {
+            throw new IllegalArgumentException("PENDING 상태만 " + reservation.getStatus() + "로 변경 가능합니다.");
+        }
+    }
+
+    private void validateExpiredStatus(Reservation reservation) {
+        if (reservation.getStatus().equals(ReservationStatus.EXPIRED)) {
+            throw new IllegalArgumentException("EXPIRED 상태인 예약은 취소할 수 없습니다.");
+        }
+    }
+
+    private Item findItemById(Long itemId) {
+        return itemRepository.findById(itemId)
+                .orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 물건이 존재하지 않습니다."));
+    }
+
+    private User findUserById(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("해당 ID에 맞는 사용자가 존재하지 않습니다."));
     }
 }
